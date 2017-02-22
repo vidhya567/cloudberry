@@ -678,30 +678,3 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
   });
 
 
-
-
-
-
-
-
-
-
-
-
-
-//             var allItems = tree.all();
-//            console.log("tree:",allItems);
-
-//                $http.get(rteBounds).success(function(data) {
-//                 for(var i = 0;i<fcv.features.length;i++)
-//                 {
-//                    for(var j = 0;j<data.features.length;j++)
-//                    {
-//                           //console.log(fcv.features[i].polygon.centroidLatitude,data.features[j].centroidLatitude);
-//                        if(fcv.features[i].polygon.centroidLatitude == data.features[j].centroidLatitude && fcv.features[i].polygon.centroidLongitude == data.features[j].centroidLongitude)
-//                           console.log(true);
-//
-//                    }
-//                 }
-//
-//                })
