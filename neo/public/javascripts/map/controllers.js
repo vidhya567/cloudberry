@@ -314,33 +314,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
          features[id].properties["centerLat"] = (maxLat + minLat) / 2
        }
     }
-        function setCenterAndBoundryfeature(feature) {
-
-
-             var minLog = Number.POSITIVE_INFINITY;
-             var maxLog = Number.NEGATIVE_INFINITY;
-             var minLat = Number.POSITIVE_INFINITY;
-             var maxLat = Number.NEGATIVE_INFINITY;;
-             if(feature.geometry.type === "Polygon") {
-                feature.geometry.coordinates[0].forEach(function(pair) {
-                  minLog = Math.min(minLog, pair[0])
-                  maxLog = Math.max(maxLog, pair[0])
-                  minLat = Math.min(minLat, pair[1])
-                  maxLat = Math.max(maxLat, pair[1])
-                });
-             } else if( feature.geometry.type === "MultiPolygon") {
-                feature.geometry.coordinates.forEach(function(array){
-                    array[0].forEach(function(pair){
-                      minLog = Math.min(minLog, pair[0])
-                      maxLog = Math.max(maxLog, pair[0])
-                      minLat = Math.min(minLat, pair[1])
-                      maxLat = Math.max(maxLat, pair[1])
-                    });
-                });
-             }
-             feature.properties["centerLog"] = (maxLog + minLog) / 2
-             feature.properties["centerLat"] = (maxLat + minLat) / 2
-           }
+      
 
          function insert_into_tree(features){
 
@@ -357,7 +331,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
                                               $scope.tree.insert(features[id]);
                                               $scope.rm_duplicate.add(box[0]+box[1]+box[2]+box[3]);
                                            }
-                                 }
+                                  }
          }
 
 
@@ -401,13 +375,12 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
 
 
         function loadCityJsonByBound(onEachFeature){
-        console.log("start");
+        
         var bounds = $scope.map.getBounds();
         var data_response;
 
         var rteBounds = "city/" + bounds._northEast.lat + "/" + bounds._southWest.lat + "/" + bounds._northEast.lng + "/" + bounds._southWest.lng;
 
-        var id = bounds._northEast.lat + "/" + bounds._southWest.lat + "/" + bounds._northEast.lng + "/" + bounds._southWest.lng;
          var poly1 = {
                                  "type": "Feature",
 
@@ -430,7 +403,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
         var pt1 = turf.point([ bounds._northEast.lng ,bounds._northEast.lat]);
         var pt2 = turf.point([bounds._southWest.lng,bounds._southWest.lat ]);
         var bbox = turf.bbox(poly1);
-        //console.log(bbox);
+        
         var item = {
              minX : bbox[0],
              minY : bbox[1],
@@ -440,35 +413,20 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
         }
 
 
-        if($scope.cachecount>1 && turf.inside(pt1,$scope.cache) && turf.inside(pt2,$scope.cache))//turf.intersect(poly1,cache) != undefined
+        if($scope.cachecount>1 && turf.inside(pt1,$scope.cache) && turf.inside(pt2,$scope.cache))
         {
+            //cache hit
             var result = $scope.tree.search(item);
 
             data_response = turf.featureCollection(result);
-            console.log(data_response);
-            console.log("match");
-                            $http.get(rteBounds).success(function(data) {
-                             console.log(data);
-                             for(var i = 0;i<data_response.features.length;i++)
-                             {
-                                for(var j = 0;j<data.features.length;j++)
-                                {
-                                       //console.log(fcv.features[i].polygon.centroidLatitude,data.features[j].centroidLatitude);
-                                    if(data_response.features[i].centroidLatitude == data.features[j].centroidLatitude && data_response.features[i].centroidLongitude == data.features[j].centroidLongitude)
-                                       console.log(true);
-
-                                }
-                             }
-
-                            })
-
+                      
         }
          else{
 
-
+                //cache miss
                 $http.get(rteBounds).success(function(data) {
                             $scope.cachecount = $scope.cachecount + 1;
-                            console.log("cache miss");
+                            
                             data_response = data;
 
                             if($scope.cachecount == 1)
@@ -484,7 +442,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
                         .error(function(data) {
                           console.error("Load city data failure");
                         });
-             }
+               }
 
              $scope.geojsonData.city = data_response;
 
@@ -496,13 +454,13 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
                                   onEachFeature: onEachFeature
                             });
 
-              setCenterAndBoundry($scope.geojsonData.city.features);
+             setCenterAndBoundry($scope.geojsonData.city.features);
              if (!$scope.status.init) {
                                   resetGeoIds($scope.bounds, $scope.geojsonData.city, 'cityID');
                                    Asterix.parameters.geoLevel = 'city';
                                    Asterix.queryType = 'zoom';
                                    Asterix.query(Asterix.parameters, Asterix.queryType);
-                                        }
+                                       }
 
             $scope.map.addLayer($scope.polygons.cityPolygons);
         }
