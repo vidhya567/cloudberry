@@ -1,6 +1,6 @@
 
 angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
-  .controller('MapCtrl', function($scope, $window, $http, $compile, $cacheFactory, Asterix, leafletData ) {
+  .controller('MapCtrl', function($scope, $window, $http, $compile, Asterix, leafletData ) {
     'use strict';
     $scope.result = {};
     // map setting
