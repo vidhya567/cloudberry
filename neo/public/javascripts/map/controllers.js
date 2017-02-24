@@ -412,8 +412,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
              minY : bbox[1],
              maxX : bbox[2],
              maxY : bbox[3]
-
-        }
+                  }
 
 
         if($scope.cachecount>1 && turf.inside(pt1,$scope.cache) && turf.inside(pt2,$scope.cache))
