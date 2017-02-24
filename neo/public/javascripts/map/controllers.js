@@ -96,11 +96,14 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
       leafletData.getMap().then(function(map) {
         $scope.map = map;
         $scope.bounds = map.getBounds();
+
         $scope.tree = rbush();
         $scope.cache ;
         $scope.cachecount = 0;
         $scope.rm_duplicate = new Set();
-        // to remove the leaflets auto loaded leaflet powered by
+       
+        //making attribution control to false to remove the default leaflet sign in the bottom of map
+
         map.attributionControl.setPrefix(false);
         map.setView([$scope.lat, $scope.lng],$scope.zoom);
 
