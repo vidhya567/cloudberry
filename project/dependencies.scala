@@ -23,13 +23,14 @@ object Dependencies {
     "org.webjars" % "flot" % "0.8.0",
     "org.webjars" % "angularjs" % "1.5.0",
     // map module
-    "org.webjars" % "leaflet" % "0.7.7",
+    "org.webjars.bower" % "leaflet" % "1.0.3",
     "org.webjars" % "angular-leaflet-directive" % "0.8.2",
     "org.webjars.bower" % "json-bigint" % "0.0.0",
     // timeseries module
     "org.webjars.bower" % "crossfilter" % "1.3.11",
     "org.webjars.bower" % "dc.js" % "1.7.5",
     "org.webjars" % "d3js" % "3.5.16",
+    "org.webjars.bower" % "turf" % "3.9.0",
     // sidebar module
     "org.webjars" % "font-awesome" % "4.5.0",
     "org.webjars.bower" % "bootstrap-vertical-tabs" % "1.2.1",
