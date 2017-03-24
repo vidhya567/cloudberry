@@ -549,7 +549,6 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
             }
         else
             {
-
                 $scope.tree.load(nodes);
                 console.log("Drag :",$scope.cachecount," Size:",$scope.cacheSize);
             }
