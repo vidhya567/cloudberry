@@ -829,7 +829,7 @@ angular.module('cloudberry.map', ['leaflet-directive', 'cloudberry.common'])
         }
         else {
 
-           drawMap($scope.result);
+             drawMap($scope.result);
         }
       }
     );
