@@ -2,213 +2,408 @@
 /*Cache module stores user requested city polygons.When Users requests these same city polygon area again we have it in cache
 and provide it to the user without sending http request.*/
 angular.module('cloudberry.cache', ['leaflet-directive', 'cloudberry.common' ])
- .service('Cache', function( $window, $http, $compile){
+.service('Cache', function( $window, $http, $compile){
 
-  var cachedCityPolygonTree = rbush();
-  var cachedRegion ;
-  var cacheSize = 0;
-  var insertedTreeIDs = new Set();
-  var cacheThreshold = 7500;//hard limit
-  var targetDeleteCount = 0;
-  var deletedPolygonCount = 0;
-  var preFetchDistance = 25;//  Radius distance from corners of request
+var cachedCityPolygonTree = rbush();
+var cachedRegion ;
+var cacheSize = 0;
+var insertedTreeIDs = new Set();
+var cacheThreshold = 7500;//hard limit
+var targetDeleteCount = 0;
+var deletedPolygonCount = 0;
+var preFetchDistance = 25;
+var previousRequestsData = [];
+var movementHistory = [];
+var noOfHistories = 5;
+var previousRequestCentroid;
+var cacheHitCount = 0;
+var cacheMissCount = 0;
+var currentReqMBR;
+var Hit = false;
+var currentReqCentroid;
+var weights = [0.2,0.3,0.4,0.5,0.8,1.0];
+var requestCounts = 0;
+var ratio ;
+var user_direction;
+var displayCacheRegion;
+var evictCount = 0;
+var RequestPolygonWithPrefetch;
+var cacheResetCount;
+var currentRequestPolygon;
+/* Map controller calls this function and this function checks whether a requested region is present in the cache or not. If not,
+it gets the requested region data from the middleware.*/
+this.getCityPolygonsFromCache = function city(rteBounds){
+
+   var deferred = new $.Deferred();
+   var data_response;
+
+  var bounds = rteBounds.split("/");
+    //console.log("cache rte",rteBounds);
+  var bounds_northEast_lat = parseFloat(bounds[1]);
+  var bounds_southWest_lat = parseFloat(bounds[2]);
+  var bounds_northEast_lng = parseFloat(bounds[3]);
+  var bounds_southWest_lng = parseFloat(bounds[4]);
+  currentRequestPolygon = turf.polygon([[
+      [bounds_northEast_lng,bounds_northEast_lat],
+      [bounds_northEast_lng,bounds_southWest_lat],
+      [bounds_southWest_lng,bounds_southWest_lat],
+      [bounds_southWest_lng,bounds_northEast_lat],
+      [bounds_northEast_lng,bounds_northEast_lat]
+  ]]);
+
+    requestCounts += 1;
+   // var rteBounds = "city/" + bounds._northEast.lat + "/" + bounds._southWest.lat + "/" + bounds._northEast.lng + "/" + bounds._southWest.lng;
+   var requestPolygon ;
+   var extraBounds;
+   // currentRequestPolygon = turf.polygon([[
+   //                              [bounds._northEast.lng,bounds._northEast.lat],
+   //                              [bounds._northEast.lng,bounds._southWest.lat],
+   //                              [bounds._southWest.lng,bounds._southWest.lat],
+   //                              [bounds._southWest.lng,bounds._northEast.lat],
+   //                              [bounds._northEast.lng,bounds._northEast.lat]
+   //                          ]]);
+
+    var bbox = turf.bbox(currentRequestPolygon);
+
+   currentReqMBR = bbox;
+    // to search in Rbush Tree ,we need the MBR of the requested region.
+   var item = {
+       minX : bbox[0],
+       minY : bbox[1],
+       maxX : bbox[2],
+       maxY : bbox[3]
+   }
 
 
- /* Map controller calls this function and this function checks whether a requested region is present in the cache or not. If not,
- it gets the requested region data from the middleware.*/
-  this.getCityPolygonsFromCache = function city(bounds){
+   if(typeof cachedRegion != "undefined" && typeof turf.difference(currentRequestPolygon,cachedRegion) == "undefined") {
+          //cache HIT
 
-       var deferred = new $.Deferred();
-       var data_response;
+         var result = cachedCityPolygonTree.search(item);
+         data_response = turf.featureCollection(result);
+         cacheHitCount += 1;
+         Hit = true;
+         RequestPolygonWithPrefetch = currentRequestPolygon;
+         deferred.resolve(data_response);
+         return deferred.promise();
 
+   }else{
+               //cache MISS
+            Hit = false;
+            var centroidRequestPoly = turf.centroid(currentRequestPolygon);
 
-       var rteBounds = "city/" + bounds._northEast.lat + "/" + bounds._southWest.lat + "/" + bounds._northEast.lng + "/" + bounds._southWest.lng;
+             prefetch(centroidRequestPoly,bbox).done(function(newMBR){
+                 //console.log("new bbox",newMBR,"and ",requestCounts);
+                 RequestPolygonWithPrefetch = turf.bboxPolygon(newMBR);
+                 extraBounds = "city/"+newMBR[3]+"/"+newMBR[1]+"/"+newMBR[2]+"/"+newMBR[0];
+                 $http.get(extraBounds).success(function(data) {
 
-       var currentRequestPolygon = turf.polygon([[
-                                    [bounds._northEast.lng,bounds._northEast.lat],
-                                    [bounds._northEast.lng,bounds._southWest.lat],
-                                    [bounds._southWest.lng,bounds._southWest.lat],
-                                    [bounds._southWest.lng,bounds._northEast.lat],
-                                    [bounds._northEast.lng,bounds._northEast.lat]
-                                ]]);
+                     var result_set = insertIntoTree(data.features,RequestPolygonWithPrefetch).done(function(){
 
-       var bbox = turf.bbox(currentRequestPolygon);
-        // to search in Rbush Tree ,we need the MBR of the requested region.
-       var item = {
-           minX : bbox[0],
-           minY : bbox[1],
-           maxX : bbox[2],
-           maxY : bbox[3]
-       }
+                         data_response = data;
 
-
-       if(typeof cachedRegion != "undefined" && typeof turf.difference(currentRequestPolygon,cachedRegion) == "undefined") {
-              //cache HIT
-
-             var result = cachedCityPolygonTree.search(item);
-             data_response = turf.featureCollection(result);
-             deferred.resolve(data_response);
-
+                         if(cachedRegion == undefined)
+                         {cachedRegion = currentRequestPolygon;
+                             displayCacheRegion = cachedRegion;}
+                         else {
+                             displayCacheRegion = cachedRegion;
+                             cachedRegion = turf.union(RequestPolygonWithPrefetch,cachedRegion);
+                         }
+                         previousRequestCentroid = centroidRequestPoly;
+                         var previousRequest = {};
+                         previousRequest["x"] = centroidRequestPoly["geometry"]["coordinates"][0] ;
+                         previousRequest["y"] = centroidRequestPoly["geometry"]["coordinates"][1] ;
+                         previousRequestsData.push(previousRequest);
+                         currentReqCentroid = previousRequest;
+                         cacheMissCount += 1;
+                         deferred.resolve(data_response);
+                     });
+                 }).error(function(data) {
+                     console.error("Load city data failure");
+                 });
+             });
+             //console.log("DONE");
              return deferred.promise();
+          }
+}
 
-       }else{
-                   //cache MISS
+/*Moved Right is true,Moved left is false
+Moved Up is true,Moved Down is false*/
 
-              var prefetchAdditionalRegion = turf.buffer(currentRequestPolygon, preFetchDistance , 'miles');
-              var bboxBuffer = turf.bbox(prefetchAdditionalRegion);
-                   //Pre Fetch
-              var rteExtends = "city/" + bboxBuffer[3] + "/" + bboxBuffer[1] + "/" + bboxBuffer[2] + "/" + bboxBuffer[0];
+function getAngle(pt1,pt2){
 
-              $http.get(rteExtends).success(function(data) {
-
-                               var result_set = insertIntoTree(data.features,currentRequestPolygon).done(function(){
-
-                                                var extendPoly = turf.bboxPolygon(bboxBuffer);
-
-                                                if(cachedRegion == undefined)
-                                                    {cachedRegion = extendPoly;}
-                                                else
-                                                    {cachedRegion = turf.union(extendPoly,cachedRegion);}
-
-                                                var result = cachedCityPolygonTree.search(item);
-                                                data_response = turf.featureCollection(result);
-
-                                                deferred.resolve(data_response);
+   var  x1 = pt1["geometry"]["coordinates"][0];
+   var  x2 = pt2["geometry"]["coordinates"][0];
+   var y1 =  pt1["geometry"]["coordinates"][1];
+   var y2 =  pt2["geometry"]["coordinates"][1];
+   var angle = Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+   ratio = (y2-y1)/(x2-x1);
+   ////console.log("angle",angle);
+   return angle;
+}
 
 
-                      });
-              }).error(function(data) {
-                                    console.error("Load city data failure");
-              });
-              return deferred.promise();
-       }
-  }
+
+
+
+function prefetch(currentRequestCentroid,curReqBBox){
+    var deferred = new $.Deferred();
+    if(typeof cachedRegion == "undefined" || typeof previousRequestCentroid == "undefined")
+    {
+        //console.log("preFtech",curReqBBox);
+        deferred.resolve(curReqBBox);
+        return deferred.promise();
+    }
+
+    //console.log(previousRequestCentroid,"centroid");
+    var x1 = currentRequestCentroid["geometry"]["coordinates"][0];
+    var y1 = currentRequestCentroid["geometry"]["coordinates"][1];
+    var angle = getAngle(previousRequestCentroid,currentRequestCentroid);
+    var y2,x2;
+
+    if(angle>45 && angle<=135){
+         y2 = curReqBBox[3];
+         x2 = ((y2-y1)/ratio)+x1;
+         //console.log("line1-TOP");
+    }
+    else if(angle>-45 && angle<=45){
+
+         x2 = curReqBBox[2];
+         y2 = ratio*(x2-x1)+y1;
+         //console.log("line2-RIGHT");
+    }
+    else if(angle>=-135 && angle<=-45){
+         y2 = curReqBBox[1];
+         x2 = ((y2-y1)/ratio)+x1;
+         //console.log("line3-DOWN");
+    }
+    else if((angle>=135 && angle<=180) || (angle>=-180 && angle<=-135)){
+         x2 = curReqBBox[0];
+         y2 = ratio*(x2-x1)+y1;
+         //console.log("line4-LEFT");
+    }
+    var edgePoint = turf.point([x2,y2]);
+    var bearing = turf.bearing(previousRequestCentroid,currentRequestCentroid);
+    var units = 'miles';
+    var newPoint = turf.destination(edgePoint,preFetchDistance,bearing,units);
+    //console.log(newPoint["geometry"]["coordinates"][0],newPoint["geometry"]["coordinates"][1]);
+    //console.log(angle);
+
+    var newX = newPoint["geometry"]["coordinates"][0];
+    var newY = newPoint["geometry"]["coordinates"][1];
+    var deltaX = x2-newX;
+    var deltaY = y2-newY;
+    var maxDelta = Math.max(Math.abs(deltaX),Math.abs(deltaY));
+    // if(angle == 0){
+    //     return curReqBBox;
+    // }
+    var newbbox;
+    var minX = curReqBBox[0];
+    var minY = curReqBBox[1];
+    var maxX = curReqBBox[2];
+    var maxY = curReqBBox[3];
+    if(angle>0 && angle<=90){
+        //NE
+        //console.log("NE");
+        var newmaxX = maxX + maxDelta;
+        var newmaxY = maxY + maxDelta;
+
+        if(newmaxX<maxX){
+            newmaxX = maxX;
+            //console.log("faultX");
+        }
+        if(newmaxY<maxY){
+            newmaxY = maxY;
+            //console.log("faultY");
+        }
+
+        newbbox = [minX,minY,newmaxX,newmaxY];
+        user_direction = "NE";
+    }else if(angle>-180 && angle<=-90){
+        //SW
+
+        //console.log("SW");
+        var newminX = minX - maxDelta;
+        var newminY = minY - maxDelta;
+        if(newminY>minY){
+            newminY = minY;
+            //console.log("faultX");
+        }
+        if(newminX>minX){
+            newminX = minX;
+            //console.log("faultY");
+        }
+        newbbox = [newminX,newminY,maxX,maxY];
+        user_direction = "SW";
+    }else if(angle>-90 && angle<=0){
+        //SE
+        //console.log("SE");
+        var newmaxX = maxX+maxDelta;
+        var newminY = minY-maxDelta;
+        if(newmaxX<maxX){
+            //console.log("faultX");
+            newmaxX = maxX;
+        }
+        if(newminY>minY){
+            //console.log("faultY");
+            newminY = minY;
+        }
+        newbbox = [minX,newminY,newmaxX,maxY];
+        user_direction = "SE";
+
+    }else if( angle>90 && angle<=180) {
+        //NW
+        //console.log("NW");
+        var newminX = minX - maxDelta;
+        var newmaxY = maxY + maxDelta;
+        if(newminX>minX){
+            newminX = minX;
+            //console.log("faultX");
+        }
+        if(newmaxY<maxY){
+            newmaxY = maxY;
+            //console.log("faultY");
+        }
+        newbbox = [newminX, minY, maxX, newmaxY];
+        user_direction = "NW";
+    }
+    deferred.resolve(newbbox);
+    //console.log("resolved");
+    return deferred.promise();
+}
+
 //to insert polygons into the Rtree,features are the city polygons
- var insertIntoTree = function insertIntoTree(features,currentRequest){
+var insertIntoTree = function insertIntoTree(features,currentRequest){
 
-       var deferred = new $.Deferred();
-       var nodes = [];
-       var treeID;
+   var deferred = new $.Deferred();
+   var nodes = [];
+   var treeID;
 
-       for(var id in features){
-
-           var box = turf.bbox(features[id]);
-           features[id].minX = box[0];
-           features[id].minY = box[1];
-           features[id].maxX = box[2];
-           features[id].maxY = box[3];
-           features[id].properties["centerLog"] = (features[id].maxX + features[id].minX) / 2;
-           features[id].properties["centerLat"] = (features[id].maxY + features[id].minY) / 2;
-           treeID = box[0]+"/"+box[1]+"/"+box[2]+"/"+box[3];
-           if( insertedTreeIDs.has(treeID) == false){
-                   nodes.push(features[id]);
-                   insertedTreeIDs.add(treeID);
-
-           }
-
+   for(var id in features){
+       var box = turf.bbox(features[id]);
+       features[id].minX = box[0];
+       features[id].minY = box[1];
+       features[id].maxX = box[2];
+       features[id].maxY = box[3];
+       features[id].properties["centerLog"] = (features[id].maxX + features[id].minX) / 2;
+       features[id].properties["centerLat"] = (features[id].maxY + features[id].minY) / 2;
+       treeID = box[0]+"/"+box[1]+"/"+box[2]+"/"+box[3];
+       if( insertedTreeIDs.has(treeID) == false){
+               nodes.push(features[id]);
+               insertedTreeIDs.add(treeID);
        }
-       //Checking Cache Overflow ,occurs when current polygons(nodes) to get inserted plus cachesize is greater than Cache Threshold
-       if((cacheSize+nodes.length) >= cacheThreshold){
+   }
+   //Checking Cache Overflow ,occurs when current polygons(nodes) to get inserted plus cachesize is greater than Cache Threshold
+   if((cacheSize+nodes.length) >= cacheThreshold){
 
-             targetDeleteCount = (cacheSize+nodes.length) - cacheThreshold;
-             evict(currentRequest).done(function(){
+         targetDeleteCount = (cacheSize+nodes.length) - cacheThreshold;
+         evict(currentRequest).done(function(){
 
-                   cachedCityPolygonTree.load(nodes);
-                   cacheSize += nodes.length;
-              });
-          deferred.resolve();
-          return deferred.promise();
-
-       }else{
                cachedCityPolygonTree.load(nodes);
-               deferred.resolve();
-               return deferred.promise();
-       }
+               cacheSize += nodes.length;
+          });
+      deferred.resolve();
+      evictCount += 1;
+      return deferred.promise();
 
- }
+   }else{
+           cacheSize += nodes.length;
+           cachedCityPolygonTree.load(nodes);
+           deferred.resolve();
+           return deferred.promise();
+   }
+}
 
 //Determines which part of the cached region needs to be evicted to reduce the cached city polygons to ensure staying within the cache budget.
-  var evict = function Evict(currentRequest){
+var evict = function Evict(currentRequest){
 
-       var deferred = new $.Deferred();
-       var cache_bbox = turf.bbox(cachedRegion);
-       var C_minX = cache_bbox[0];
-       var C_minY = cache_bbox[1];
-       var C_maxX = cache_bbox[2];
-       var C_maxY = cache_bbox[3];
+   var deferred = new $.Deferred();
+   var cache_bbox = turf.bbox(cachedRegion);
+   var C_minX = cache_bbox[0];
+   var C_minY = cache_bbox[1];
+   var C_maxX = cache_bbox[2];
+   var C_maxY = cache_bbox[3];
 
-       var request_bbox = turf.bbox(currentRequest);
-       var R_minX = request_bbox[0];
-       var R_minY = request_bbox[1];
-       var R_maxX = request_bbox[2];
-       var R_maxY = request_bbox[3];
+   var request_bbox = turf.bbox(currentRequest);
+   var R_minX = request_bbox[0];
+   var R_minY = request_bbox[1];
+   var R_maxX = request_bbox[2];
+   var R_maxY = request_bbox[3];
 
-       var cachedRegionMBR = turf.bboxPolygon(cache_bbox);
-       //Checks which part of requested region is overlapped with the cached region.
-       var UpperRight = turf.inside(turf.point([R_maxX,R_maxY]),cachedRegionMBR);
-       var UpperLeft  = turf.inside(turf.point([R_minX,R_maxY]),cachedRegionMBR);
-       var LowerLeft  = turf.inside(turf.point([R_minX,R_minY]),cachedRegionMBR);
-       var LowerRight = turf.inside(turf.point([R_maxY,R_minY]),cachedRegionMBR);
+   var cachedRegionMBR = turf.bboxPolygon(cache_bbox);
+   //Checks which part of requested region is overlapped with the cached region.
+   var UpperRight = turf.inside(turf.point([R_maxX,R_maxY]),cachedRegionMBR);
+   var UpperLeft  = turf.inside(turf.point([R_minX,R_maxY]),cachedRegionMBR);
+   var LowerLeft  = turf.inside(turf.point([R_minX,R_minY]),cachedRegionMBR);
+   var LowerRight = turf.inside(turf.point([R_maxY,R_minY]),cachedRegionMBR);
 
 
-       if(LowerRight || LowerLeft && !UpperRight && !UpperLeft){
-            //Y from bottom to top
-            cutRegion(C_minX,C_minY,C_maxX,R_minY,false,true) .done(function(){
-                    deferred.resolve();
-            }).fail(function(){
+   if(LowerRight || LowerLeft && !UpperRight && !UpperLeft){
+        //Y from bottom to top
+       ////console.log("Y from bottom to top");
 
-                     clearCache().done();
-                     deferred.resolve();
-            })
-            return deferred.promise();
-       }
-       else if(UpperRight || UpperLeft && !LowerLeft && !LowerRight){
-            cutRegion(C_minX,R_maxY,C_maxX,C_maxY,false,false).done(function(){
-            //Y from top to bottom
-                   deferred.resolve();
-            }).fail(function(){
+        cutRegion(C_minX,C_minY,C_maxX,R_minY,user_direction) .done(function(){
+                deferred.resolve();
+        }).fail(function(){
+                 ////console.log("Y from bottom to top order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
+                 clearCache().done();
+                 deferred.resolve();
+        })
+        return deferred.promise();
+   }
+   else if(UpperRight || UpperLeft && !LowerLeft && !LowerRight){
 
-                    clearCache().done();
-                    deferred.resolve();
-            })
-            return deferred.promise();
+        cutRegion(C_minX,R_maxY,C_maxX,C_maxY,user_direction).done(function(){
+        //Y from top to bottom
 
-       }
-       else if(UpperRight && LowerRight){
-            cutRegion(R_maxX,C_minY,C_maxX,C_maxY,true,true).done(function(){
-            //X from left to right
-                   deferred.resolve();
-            }).fail(function(){
+               deferred.resolve();
+        }).fail(function(){
+                ////console.log("Y from top to bottom order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
+                clearCache().done();
+                deferred.resolve();
+        })
+        return deferred.promise();
 
-                    clearCache().done();
-                    deferred.resolve();
-            })
-            return deferred.promise();
+   }
+   else if(UpperRight && LowerRight){
+       ////console.log("X from left to right");
 
-       }else if(UpperLeft && LowerLeft){
-            cutRegion(C_minX,C_minY,R_minX,C_maxY,true,false).done(function(){
-            //X from right to left
-                   deferred.resolve();
-            }).fail(function(){
+        cutRegion(R_maxX,C_minY,C_maxX,C_maxY,user_direction).done(function(){
+        //X from left to right
+               deferred.resolve();
+        }).fail(function(){
+                ////console.log("X from left to right order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
+                clearCache().done();
+                deferred.resolve();
+        })
+        return deferred.promise();
 
-                    clearCache().done();
-                    deferred.resolve();
-            })
-            return deferred.promise();
+   }else if(UpperLeft && LowerLeft){
+       ////console.log("X from right to left");
 
-       }else if(!LowerRight &&   !LowerLeft && !UpperLeft && !UpperRight){
+        cutRegion(C_minX,C_minY,R_minX,C_maxY,user_direction).done(function(){
+        //X from right to left
+                           deferred.resolve();
+        }).fail(function(){
+                ////console.log("X from left to right order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
+                clearCache().done();
+                deferred.resolve();
+        })
+        return deferred.promise();
 
-              cutRegion(C_minX,C_minY,C_maxX,C_maxY,true,true).done(function(){
-              //NO Overlap
-                     deferred.resolve();
-              }).fail(function(){
+   }else if(!LowerRight &&   !LowerLeft && !UpperLeft && !UpperRight){
+          ////console.log("NO Overlap");
+          cutRegion(C_minX,C_minY,C_maxX,C_maxY,user_direction).done(function(){
+          //NO Overlap
 
-                      clearCache().done();
-                      deferred.resolve();
-              })
-              return deferred.promise();
-       }
- }
+                 deferred.resolve();
+          }).fail(function(){
+                  ////console.log("NO OVERLAP .PROBLEM!");
+                  clearCache().done();
+                  deferred.resolve();
+          })
+          return deferred.promise();
+   }
+}
 /*Checks whether evicting some city polygons in a part of the cache region satisfies the target deletion count.
 If not, returns a failure message to the caller*/
 //Whether evicting the cached region vertically or horizontally. true - X axis (horizontally), false - Y axis (vertically)
@@ -216,90 +411,116 @@ If not, returns a failure message to the caller*/
 //BottomToTop = false
 //LeftToRight = true
 //RightToLeft = false
- var cutRegion =  function findCornerofEviction(minX,minY,maxX,maxY,isHorizontalEviction,Direction){
+var cutRegion =  function findCornerofEviction(minX,minY,maxX,maxY,Direction){
 
-            var deferred = new $.Deferred();
-            var line;
-            if(isHorizontalEviction){
-                if(Direction){
-                    //Left to Right
-                    line = turf.lineString([[minX,maxY],[maxX,maxY]]);
-                }else{
-                    //Right to Left
-                    line = turf.lineString([[maxX,maxY],[minX,maxY]]);
-                }
-            }else{
-                if(Direction){
-                    //Top to Bottom
-                    line = turf.lineString([[maxX,maxY],[maxX,minY]]);
-                }else{
-                    //Bottom toTop
-                    line = turf.lineString([[maxX,minY],[maxX,maxY]]);
-                }
+        var deferred = new $.Deferred();
+        var Xline,Yline;
+        if(Direction == "NE"){
+            Xline = turf.lineString([[minX,minY],[maxX,minY]]);
+            Yline = turf.lineString([[minX,minY],[minX,maxY]]);
+        }
+        if(Direction == "SW"){
+            Xline =  turf.lineString([[maxX,maxY],[minX,maxY]]);
+            Yline =  turf.lineString([[maxX,maxY],[maxX,minY]]);
+        }
+        if(Direction == "NW"){
+            Xline = turf.lineString([[maxX,minY],[minX,minY]]);
+            Yline = turf.lineString([[maxX,minY],[maxX,maxY]]);
+        }
+        if(Direction == "SE"){
+            Xline =  turf.lineString([[minX,maxY],[maxX,maxY]]);
+            Yline =  turf.lineString([[minX,maxY],[minX,minY]]);
+        }
+        var distanceX = turf.lineDistance(Xline, 'miles');
+        var distanceY = turf.lineDistance(Yline,'miles');
+        //Make 10 slices
+        var ShiftX = distanceX/10;
+        var ShiftY = distanceY/10;
+        var start = 0;
+        var stop= distanceX;
+        var removeItems;
+        var slicedXline,slicedYline,cutPointX,cutPointY,cutBbox,remove_search;
+        var moveX = ShiftX;
+        var moveY = ShiftY;
+        var ti = performance.now();
+        var count = 0;
+        while(deletedPolygonCount<targetDeleteCount){
+
+
+            slicedXline = turf.lineSliceAlong(Xline, start, moveX, 'miles');
+            slicedYline = turf.lineSliceAlong(Yline, start, moveY, 'miles');
+            cutPointX = slicedXline["geometry"]["coordinates"][1][0];
+            cutPointY = slicedYline["geometry"]["coordinates"][1][1];
+            if(Direction == "NE"){
+                cutBbox = [minX,minY,cutPointX,cutPointY];
+            }
+            if(Direction == "SW"){
+                cutBbox = [cutPointX,cutPointY,maxX,maxY];
+            }
+            if(Direction == "NW"){
+                cutBbox = [cutPointX,minY,maxX,cutPointY];
+            }
+            if(Direction == "SE"){
+                cutBbox = [minX,cutPointY,cutPointX,maxY];
             }
 
-            var distance = turf.lineDistance(line, 'miles');
-            //Make 10 slices
-            var Move = distance/10;
-            var start = 0;
-            var stop= distance;
-            var removeItems;
-            var sliced,cutPoint,cutBbox,remove_search;
+              remove_search = {
+                                    minX: cutBbox[0],
+                                    minY: cutBbox[1],
+                                    maxX: cutBbox[2],
+                                    maxY: cutBbox[3]
+                                }
+              removeItems = cachedCityPolygonTree.search(remove_search);
+              deletedPolygonCount = removeItems.length;
+              moveX += ShiftX;
+              moveY += ShiftY;
+              count += 1;
 
-            while(deletedPolygonCount<targetDeleteCount){
+              if(moveX>stop)
+              {break;}
+        }
+        ////console.log("time:",performance.now()-ti,"count:",count);
+        deletion(removeItems).done(function(){
+                //Delete is complete
+                //console.log("Polygon search",remove_search);
+                var PolygonRegionRemovedFromCache = turf.bboxPolygon(cutBbox);
+                //console.log("remove",PolygonRegionRemovedFromCache);
+                cacheSize -= deletedPolygonCount;
+                //console.log("before delete:",cachedRegion,"removing ",PolygonRegionRemovedFromCache);
 
-                  sliced = turf.lineSliceAlong(line, start, Move, 'miles');
-                  if(isHorizontalEviction){
-                  cutPoint = sliced["geometry"]["coordinates"][1][0];
-                  }else{
-                  cutPoint = sliced["geometry"]["coordinates"][1][1];
-                  }
+                cachedRegion = turf.difference(cachedRegion,PolygonRegionRemovedFromCache);
+                //console.log("after Delete:",cachedRegion);
+                targetDeleteCount -= deletedPolygonCount;
+                deletedPolygonCount = 0;
+        });
 
-                  cutBbox = [minX,minY,cutPoint,maxY];
-                  remove_search = {
-                                        minX: cutBbox[0],
-                                        minY: cutBbox[1],
-                                        maxX: cutBbox[2],
-                                        maxY: cutBbox[3]
-                                    }
-                  removeItems = cachedCityPolygonTree.search(remove_search);
-                  deletedPolygonCount = removeItems.length;
-                  Move += Move;
-                  if(Move>stop)
-                  {break;}
-            }
+        if(targetDeleteCount>0){
 
-            deletion(removeItems).done(function(){
-                    //Delete is complete
-                    var PolygonRegionRemovedFromCache = turf.bboxPolygon(remove_search);
-                    cacheSize -= deletedPolygonCount;
-                    cachedRegion = turf.difference(cachedRegion,PolygonRegionRemovedFromCache);
-                    targetDeleteCount -= deletedPolygonCount;
-                    deletedPolygonCount = 0;
-            });
+             //UnSucessFul Delete
+              ////console.log("Cache Size:",cacheSize);
+              ////console.log("Deleted Count:",deletedPolygonCount);
+              ////console.log("Target",targetDeleteCount);
+              ////console.log("removed region",remove_search);
 
-            if(targetDeleteCount>0){
-
-                 //UnSucessFul Delete
-                  deferred.reject();
-                  return deferred.promise();
-            }else{
-                  // SucessFul Delete
-                  deferred.resolve();
-                  return deferred.promise();
-            }
- }
+              deferred.reject();
+              return deferred.promise();
+        }else{
+              // SucessFul Delete
+              deferred.resolve();
+              return deferred.promise();
+        }
+}
 
 // deleting polygons from Rtree
- var deletion = function deleteNodesfromTree(removeItems){
-      var deferred = new $.Deferred();
-      for (var i = 0;i<removeItems.length;i++)
-            cachedCityPolygonTree.remove(removeItems[i]);
+var deletion = function deleteNodesfromTree(removeItems){
+  var deferred = new $.Deferred();
+  for (var i = 0;i<removeItems.length;i++)
+        cachedCityPolygonTree.remove(removeItems[i]);
 
-      deferred.resolve();
-      return deferred.promise();
-  }
-     
+  deferred.resolve();
+  return deferred.promise();
+}
+
 var clearCache = function remove(){
     var deferred = new $.Deferred();
     cachedRegion = undefined ;
@@ -312,7 +533,68 @@ var clearCache = function remove(){
     return deferred.promise();
 }
 
+this.getCacheSize = function getSize(){
+    return cacheSize;
+}
+this.getCacheHitCount = function getHit(){
+        return cacheHitCount;
+}
+this.getCacheMissCount = function getMiss(){
+    return cacheMissCount;
+}
 
+this.whetherOverflow = function(){
+    return (cacheThreshold>cacheSize);
+}
 
+this.getRequest = function(){
+    return currentReqMBR;
+}
+
+this.getHitorMiss= function(){
+    return Hit;
+}
+
+this.getRequestCentroid = function(){
+    return currentReqCentroid;
+}
+
+this.getCachedRegion = function(){
+    if(Hit)
+        return cachedRegion;
+    else
+        return displayCacheRegion;
+}
+
+this.getRequestsCount = function(){
+    return requestCounts;
+}
+
+this.getCacheThreshold = function(){
+    return cacheThreshold;
+}
+
+this.getEvictCount = function(){
+    return evictCount;
+}
+
+this.getPrefetchedRegion = function(){
+    return  RequestPolygonWithPrefetch;
+}
+
+this.getCurrentRequest = function(){
+    return currentRequestPolygon;
+}
+
+this.getCache = function(){
+    if(typeof cachedRegion != "undefined") {
+        var bbox = turf.bbox(cachedRegion);
+        console.log(bbox);
+        return bbox;
+    }
+
+    else
+    return;
+}
 })
 
