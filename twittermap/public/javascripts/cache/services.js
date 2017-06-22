@@ -38,7 +38,6 @@ this.getCityPolygonsFromCache = function city(rteBounds){
    var data_response;
 
   var bounds = rteBounds.split("/");
-    //console.log("cache rte",rteBounds);
   var bounds_northEast_lat = parseFloat(bounds[1]);
   var bounds_southWest_lat = parseFloat(bounds[2]);
   var bounds_northEast_lng = parseFloat(bounds[3]);
@@ -52,19 +51,10 @@ this.getCityPolygonsFromCache = function city(rteBounds){
   ]]);
 
     requestCounts += 1;
-   // var rteBounds = "city/" + bounds._northEast.lat + "/" + bounds._southWest.lat + "/" + bounds._northEast.lng + "/" + bounds._southWest.lng;
-   var requestPolygon ;
-   var extraBounds;
-   // currentRequestPolygon = turf.polygon([[
-   //                              [bounds._northEast.lng,bounds._northEast.lat],
-   //                              [bounds._northEast.lng,bounds._southWest.lat],
-   //                              [bounds._southWest.lng,bounds._southWest.lat],
-   //                              [bounds._southWest.lng,bounds._northEast.lat],
-   //                              [bounds._northEast.lng,bounds._northEast.lat]
-   //                          ]]);
+
 
     var bbox = turf.bbox(currentRequestPolygon);
-
+    var extraBounds;
    currentReqMBR = bbox;
     // to search in Rbush Tree ,we need the MBR of the requested region.
    var item = {
@@ -97,7 +87,7 @@ this.getCityPolygonsFromCache = function city(rteBounds){
                  extraBounds = "city/"+newMBR[3]+"/"+newMBR[1]+"/"+newMBR[2]+"/"+newMBR[0];
                  $http.get(extraBounds).success(function(data) {
 
-                     var result_set = insertIntoTree(data.features,RequestPolygonWithPrefetch).done(function(){
+                     insertIntoTree(data.features,RequestPolygonWithPrefetch).done(function(){
 
                          data_response = data;
 
@@ -121,7 +111,7 @@ this.getCityPolygonsFromCache = function city(rteBounds){
                      console.error("Load city data failure");
                  });
              });
-             //console.log("DONE");
+
              return deferred.promise();
           }
 }
@@ -137,7 +127,7 @@ function getAngle(pt1,pt2){
    var y2 =  pt2["geometry"]["coordinates"][1];
    var angle = Math.atan2(y2-y1,x2-x1)*180/Math.PI;
    ratio = (y2-y1)/(x2-x1);
-   ////console.log("angle",angle);
+   console.log("angle",angle);
    return angle;
 }
 
@@ -160,114 +150,94 @@ function prefetch(currentRequestCentroid,curReqBBox){
     var angle = getAngle(previousRequestCentroid,currentRequestCentroid);
     var y2,x2;
 
+    //Finding Intersection of Trend Line and Request Polygon
     if(angle>45 && angle<=135){
+        //line1-TOP
          y2 = curReqBBox[3];
          x2 = ((y2-y1)/ratio)+x1;
-         //console.log("line1-TOP");
+
     }
     else if(angle>-45 && angle<=45){
-
+        //line2-RIGHT
          x2 = curReqBBox[2];
          y2 = ratio*(x2-x1)+y1;
-         //console.log("line2-RIGHT");
+
     }
     else if(angle>=-135 && angle<=-45){
+        //line3-DOWN
          y2 = curReqBBox[1];
          x2 = ((y2-y1)/ratio)+x1;
-         //console.log("line3-DOWN");
+
     }
     else if((angle>=135 && angle<=180) || (angle>=-180 && angle<=-135)){
+        //line4-LEFT
          x2 = curReqBBox[0];
          y2 = ratio*(x2-x1)+y1;
-         //console.log("line4-LEFT");
+
     }
+    //Intersected Point
     var edgePoint = turf.point([x2,y2]);
     var bearing = turf.bearing(previousRequestCentroid,currentRequestCentroid);
     var units = 'miles';
+    //New Point after prefetch Distance
     var newPoint = turf.destination(edgePoint,preFetchDistance,bearing,units);
-    //console.log(newPoint["geometry"]["coordinates"][0],newPoint["geometry"]["coordinates"][1]);
-    //console.log(angle);
+
 
     var newX = newPoint["geometry"]["coordinates"][0];
     var newY = newPoint["geometry"]["coordinates"][1];
     var deltaX = x2-newX;
     var deltaY = y2-newY;
     var maxDelta = Math.max(Math.abs(deltaX),Math.abs(deltaY));
-    // if(angle == 0){
-    //     return curReqBBox;
-    // }
+
     var newbbox;
     var minX = curReqBBox[0];
     var minY = curReqBBox[1];
     var maxX = curReqBBox[2];
     var maxY = curReqBBox[3];
+    //Finding the new MBR
     if(angle>0 && angle<=90){
         //NE
-        //console.log("NE");
+
         var newmaxX = maxX + maxDelta;
         var newmaxY = maxY + maxDelta;
-
-        if(newmaxX<maxX){
-            newmaxX = maxX;
-            //console.log("faultX");
-        }
-        if(newmaxY<maxY){
-            newmaxY = maxY;
-            //console.log("faultY");
-        }
-
         newbbox = [minX,minY,newmaxX,newmaxY];
         user_direction = "NE";
+
     }else if(angle>-180 && angle<=-90){
         //SW
 
-        //console.log("SW");
         var newminX = minX - maxDelta;
         var newminY = minY - maxDelta;
-        if(newminY>minY){
-            newminY = minY;
-            //console.log("faultX");
-        }
-        if(newminX>minX){
-            newminX = minX;
-            //console.log("faultY");
-        }
         newbbox = [newminX,newminY,maxX,maxY];
         user_direction = "SW";
+
     }else if(angle>-90 && angle<=0){
         //SE
-        //console.log("SE");
+
         var newmaxX = maxX+maxDelta;
         var newminY = minY-maxDelta;
-        if(newmaxX<maxX){
-            //console.log("faultX");
-            newmaxX = maxX;
-        }
-        if(newminY>minY){
-            //console.log("faultY");
-            newminY = minY;
-        }
         newbbox = [minX,newminY,newmaxX,maxY];
         user_direction = "SE";
 
     }else if( angle>90 && angle<=180) {
         //NW
-        //console.log("NW");
+
         var newminX = minX - maxDelta;
         var newmaxY = maxY + maxDelta;
         if(newminX>minX){
             newminX = minX;
-            //console.log("faultX");
+            console.log("faultX");
         }
         if(newmaxY<maxY){
             newmaxY = maxY;
-            //console.log("faultY");
+            console.log("faultY");
         }
         newbbox = [newminX, minY, maxX, newmaxY];
         user_direction = "NW";
+
     }
     deferred.resolve(newbbox);
-    //console.log("resolved");
+
     return deferred.promise();
 }
 
@@ -339,7 +309,6 @@ var evict = function Evict(currentRequest){
 
    if(LowerRight || LowerLeft && !UpperRight && !UpperLeft){
         //Y from bottom to top
-       ////console.log("Y from bottom to top");
 
         cutRegion(C_minX,C_minY,C_maxX,R_minY,user_direction) .done(function(){
                 deferred.resolve();
@@ -365,10 +334,10 @@ var evict = function Evict(currentRequest){
 
    }
    else if(UpperRight && LowerRight){
-       ////console.log("X from left to right");
+       //X from left to right
 
         cutRegion(R_maxX,C_minY,C_maxX,C_maxY,user_direction).done(function(){
-        //X from left to right
+
                deferred.resolve();
         }).fail(function(){
                 ////console.log("X from left to right order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
@@ -378,10 +347,10 @@ var evict = function Evict(currentRequest){
         return deferred.promise();
 
    }else if(UpperLeft && LowerLeft){
-       ////console.log("X from right to left");
+       //X from right to left
 
         cutRegion(C_minX,C_minY,R_minX,C_maxY,user_direction).done(function(){
-        //X from right to left
+
                            deferred.resolve();
         }).fail(function(){
                 ////console.log("X from left to right order minX,minY,maxX,maxY: ",R_minX,R_minY,R_maxX,R_maxY);
@@ -391,9 +360,9 @@ var evict = function Evict(currentRequest){
         return deferred.promise();
 
    }else if(!LowerRight &&   !LowerLeft && !UpperLeft && !UpperRight){
-          ////console.log("NO Overlap");
+          //NO Overlap"
           cutRegion(C_minX,C_minY,C_maxX,C_maxY,user_direction).done(function(){
-          //NO Overlap
+
 
                  deferred.resolve();
           }).fail(function(){
@@ -592,9 +561,15 @@ this.getCache = function(){
         console.log(bbox);
         return bbox;
     }
-
     else
     return;
+}
+this.getCachePolygons = function(){
+    var cityPolygons = cachedCityPolygonTree.all();
+    console.log(cityPolygons);
+    var city_data = turf.featureCollection(cityPolygons);
+    console.log(city_data);
+    return city_data;
 }
 })
 

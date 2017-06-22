@@ -39,10 +39,6 @@ class TwitterMapApplication @Inject()(val wsClient: WSClient,
     }
   }
 
-//  def getCities= Action.async(parse.json) { request => (request.body);
-//
-//
-//  }
   def getCity(neLat: Double, swLat: Double, neLng: Double, swLng: Double) = Action {
     Ok(TwitterMapApplication.findCity(neLat, swLat, neLng, swLng, cities))
   }
